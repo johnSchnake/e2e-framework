@@ -22,7 +22,6 @@ import (
 
 	"sigs.k8s.io/e2e-framework/pkg/envconf"
 	"sigs.k8s.io/e2e-framework/pkg/features"
-	"sigs.k8s.io/e2e-framework/pkg/internal/types"
 )
 
 func TestEnv_New(t *testing.T) {
@@ -398,11 +397,53 @@ func TestEnv_Test(t *testing.T) {
 			setup: func(t *testing.T, ctx context.Context) []string {
 				env := newTestEnv()
 				val := []string{}
-				env.BeforeEachFeature(func(ctx context.Context, _ *envconf.Config, info types.FeatureInfo) (context.Context, error) {
+				env.BeforeEachFeature(func(ctx context.Context, _ *envconf.Config, info features.Feature) (context.Context, error) {
 					val = append(val, "before-each-feature")
 					return ctx, nil
-				}).AfterEachFeature(func(ctx context.Context, _ *envconf.Config, info types.FeatureInfo) (context.Context, error) {
+				}).AfterEachFeature(func(ctx context.Context, _ *envconf.Config, info features.Feature) (context.Context, error) {
 					val = append(val, "after-each-feature")
+					return ctx, nil
+				})
+				f1 := features.New("test-feat").Assess("assess", func(ctx context.Context, t *testing.T, _ *envconf.Config) context.Context {
+					val = append(val, "test-feat-1")
+					return ctx
+				})
+				f2 := features.New("test-feat").Assess("assess", func(ctx context.Context, t *testing.T, _ *envconf.Config) context.Context {
+					val = append(val, "test-feat-2")
+					return ctx
+				})
+				env.Test(t, f1.Feature(), f2.Feature())
+				return val
+			},
+		}, {
+			name: "before-and-after features unable to mutate feature",
+			ctx:  context.TODO(),
+			expected: []string{
+				"before-each-feature",
+				"test-feat-1",
+				"after-each-feature",
+				"before-each-feature",
+				"test-feat-2",
+				"after-each-feature",
+			},
+			setup: func(t *testing.T, ctx context.Context) []string {
+				env := newTestEnv()
+				val := []string{}
+				env.BeforeEachFeature(func(ctx context.Context, _ *envconf.Config, info features.Feature) (context.Context, error) {
+					val = append(val, "before-each-feature")
+					t.Logf("%#v, len(steps)=%v step[0].Name: %v\n", info, len(info.Steps()), info.Steps()[0].Name())
+
+					// Prior to fixing this logic, this would cause the test to fail/panic.
+					//info.Steps()[0] = nil
+					labelMap := info.Labels()
+					labelMap["foo"] = "bar"
+					return ctx, nil
+				}).AfterEachFeature(func(ctx context.Context, _ *envconf.Config, info features.Feature) (context.Context, error) {
+					val = append(val, "after-each-feature")
+					t.Logf("%#v, len(steps)=%v\n", info, len(info.Steps()))
+					if info.Labels()["foo"] == "bar" {
+						t.Errorf("Expected label from previous feature hook to not include foo:bar")
+					}
 					return ctx, nil
 				})
 				f1 := features.New("test-feat").Assess("assess", func(ctx context.Context, t *testing.T, _ *envconf.Config) context.Context {
